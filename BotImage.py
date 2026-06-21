@@ -14,14 +14,12 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Labeled
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 
 # ============ НАСТРОЙКИ ============
-# БЕЗОПАСНО: токен только из переменных окружения
 TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN")
 if not TELEGRAM_TOKEN:
-    raise ValueError("BOT_TOKEN не найден в переменных окружения! Добавь BOT_TOKEN в Render.")
+    raise ValueError("BOT_TOKEN not found in environment variables!")
 
 PRICE_PER_IMAGE = 1
 
-# Админы — через переменную окружения или по умолчанию
 ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "6962544606,5437954093")
 ADMIN_ID = [int(x.strip()) for x in ADMIN_IDS_STR.split(",") if x.strip().isdigit()]
 
@@ -55,7 +53,6 @@ user_total_generations = {}
 user_waiting_for_prompt = {}
 prompt_cache = {}
 
-# ============ КЭШ СООБЩЕНИЙ ПОДДЕРЖКИ ============
 support_cache = {}
 admin_reply_mode = {}
 
@@ -77,9 +74,9 @@ def load_data():
                 user_ref_count = {int(k): v for k, v in data.get("ref_count", {}).items()}
                 user_free_claimed = {int(k): v for k, v in data.get("free_claimed", {}).items()}
                 user_total_generations = {int(k): v for k, v in data.get("total_generations", {}).items()}
-                logger.info("Данные загружены")
+                logger.info("Data loaded")
     except Exception as e:
-        logger.error(f"Ошибка загрузки данных: {e}")
+        logger.error(f"Data load error: {e}")
 
 
 def save_data():
@@ -94,7 +91,7 @@ def save_data():
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"Ошибка сохранения данных: {e}")
+        logger.error(f"Data save error: {e}")
 
 
 def uniquify_prompt(user_prompt):
@@ -115,7 +112,7 @@ def uniquify_prompt(user_prompt):
     return final_prompt
 
 
-def generate_image(prompt, retry=0):
+def generate_image(prompt):
     try:
         encoded = requests.utils.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{encoded}?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&model={MODEL}"
@@ -126,35 +123,35 @@ def generate_image(prompt, retry=0):
                 resp = requests.get(url, timeout=60, headers=headers)
                 if resp.status_code == 429:
                     wait = BASE_DELAY * (attempt + 1) + random.random() * 5
-                    logger.warning(f"429 — пауза {wait:.1f} сек, попытка {attempt + 1}/{MAX_RETRIES}")
+                    logger.warning(f"429 — pause {wait:.1f}s, attempt {attempt + 1}/{MAX_RETRIES}")
                     time.sleep(wait)
                     continue
                 resp.raise_for_status()
                 return Image.open(BytesIO(resp.content))
             except requests.exceptions.Timeout:
-                logger.warning(f"Таймаут, попытка {attempt + 1}/{MAX_RETRIES}")
+                logger.warning(f"Timeout, attempt {attempt + 1}/{MAX_RETRIES}")
                 time.sleep(BASE_DELAY)
                 continue
             except requests.exceptions.ConnectionError:
-                logger.warning(f"Ошибка соединения, попытка {attempt + 1}/{MAX_RETRIES}")
+                logger.warning(f"Connection error, attempt {attempt + 1}/{MAX_RETRIES}")
                 time.sleep(BASE_DELAY * 2)
                 continue
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
-                    logger.warning(f"Ошибка: {e}, попытка {attempt + 1}/{MAX_RETRIES}")
+                    logger.warning(f"Error: {e}, attempt {attempt + 1}/{MAX_RETRIES}")
                     time.sleep(BASE_DELAY)
                     continue
                 raise
         return None
     except Exception as e:
-        logger.error(f"Ошибка генерации: {e}")
+        logger.error(f"Image generation error: {e}")
         return None
 
 
 async def generate_and_send(update, context, user_id, user_prompt, final_prompt):
     try:
         status_msg = await update.message.reply_text(
-            f"🎨 *Генерация создаётся...*\n⏳ Ожидайте.",
+            f"🎨 *Generating image...*\n⏳ Please wait.",
             parse_mode="Markdown"
         )
 
@@ -162,7 +159,7 @@ async def generate_and_send(update, context, user_id, user_prompt, final_prompt)
         img = await loop.run_in_executor(None, generate_image, final_prompt)
 
         if img is None:
-            await status_msg.edit_text("❌ Ошибка генерации. Попробуйте ещё раз.")
+            await status_msg.edit_text("❌ Generation error. Try again.")
             if not is_admin(user_id):
                 user_balances[user_id] = user_balances.get(user_id, 0) + 1
                 save_data()
@@ -176,9 +173,9 @@ async def generate_and_send(update, context, user_id, user_prompt, final_prompt)
         img_bytes.seek(0)
 
         caption = (
-            f"✅ *Готово!*\n\n"
-            f"📝 Ваш промпт: `{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}`\n"
-            f"⭐ Осталось генераций: {'♾️' if is_admin(user_id) else user_balances.get(user_id, 0)}"
+            f"✅ *Done!*\n\n"
+            f"📝 Prompt: `{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}`\n"
+            f"⭐ Generations left: {'♾️' if is_admin(user_id) else user_balances.get(user_id, 0)}"
         )
 
         await update.message.reply_photo(
@@ -189,15 +186,15 @@ async def generate_and_send(update, context, user_id, user_prompt, final_prompt)
         await status_msg.delete()
 
     except Exception as e:
-        logger.error(f"Ошибка в generate_and_send: {e}")
-        await update.message.reply_text("❌ Произошла ошибка. Попробуйте позже.")
+        logger.error(f"Generate and send error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again later.")
 
 
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("🎨 Создать генерацию")],
-        [KeyboardButton("👤 Профиль"), KeyboardButton("🛒 Магазин")],
-        [KeyboardButton("👥 Рефералы"), KeyboardButton("📞 Поддержка")]
+        [KeyboardButton("🎨 Create generation")],
+        [KeyboardButton("👤 Profile"), KeyboardButton("🛒 Shop")],
+        [KeyboardButton("👥 Referrals"), KeyboardButton("📞 Support")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -214,7 +211,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_ref_count[referrer_id] = user_ref_count.get(referrer_id, 0) + 1
                 save_data()
                 await update.message.reply_text(
-                    f"✅ Вы приглашены пользователем!\n🎁 Вы получили 1 бесплатную генерацию!"
+                    f"✅ You were invited by a user!\n🎁 You got 1 free generation!"
                 )
                 user_balances[user_id] = user_balances.get(user_id, 0) + 1
                 save_data()
@@ -222,12 +219,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     welcome_text = (
-        f"🎨 *Привет, {user.first_name}!*\n\n"
-        "Я создаю уникальные картинки по твоему описанию!\n"
-        "💰 Стоимость: *1 звезда Telegram* за генерацию.\n\n"
-        "📝 Нажми кнопку *«Создать генерацию»* и напиши промпт.\n"
-        "🔄 Каждая картинка будет уникальной!\n\n"
-        "Используй кнопки меню для навигации."
+        f"🎨 *Hello, {user.first_name}!*\n\n"
+        "I create unique images from your description!\n"
+        "💰 Price: *1 Telegram Star* per generation.\n\n"
+        "📝 Click *'Create generation'* and enter your prompt.\n"
+        "🔄 Each image will be unique!\n\n"
+        "Use the menu buttons to navigate."
     )
 
     await update.message.reply_text(
@@ -256,30 +253,30 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await forward_to_admin(update, context, text)
         return
 
-    menu_buttons = ["🎨 Создать генерацию", "👤 Профиль", "🛒 Магазин", "👥 Рефералы", "📞 Поддержка"]
+    menu_buttons = ["🎨 Create generation", "👤 Profile", "🛒 Shop", "👥 Referrals", "📞 Support"]
 
     if text in menu_buttons:
-        if text == "🎨 Создать генерацию":
+        if text == "🎨 Create generation":
             user_waiting_for_prompt[user_id] = True
             save_data()
             await update.message.reply_text(
-                "📝 *Введите ваш промпт*\n\n"
-                "Опишите, что вы хотите увидеть на картинке.\n"
-                "Пример: *dragon in the sky, fantasy style*\n\n"
-                "🔄 Если хотите отменить — нажмите любую другую кнопку меню.",
+                "📝 *Enter your prompt*\n\n"
+                "Describe what you want to see in the image.\n"
+                "Example: *dragon in the sky, fantasy style*\n\n"
+                "🔄 To cancel, press any other menu button.",
                 parse_mode="Markdown"
             )
             return
-        elif text == "👤 Профиль":
+        elif text == "👤 Profile":
             await show_profile(update, context)
             return
-        elif text == "🛒 Магазин":
+        elif text == "🛒 Shop":
             await show_shop(update, context)
             return
-        elif text == "👥 Рефералы":
+        elif text == "👥 Referrals":
             await show_referrals(update, context)
             return
-        elif text == "📞 Поддержка":
+        elif text == "📞 Support":
             await show_support(update, context)
             return
 
@@ -295,7 +292,7 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await forward_to_admin(update, context, text)
     else:
         await update.message.reply_text(
-            "👑 Вы администратор. Используйте кнопки меню.",
+            "👑 You are an admin. Use the menu buttons.",
             parse_mode="Markdown"
         )
 
@@ -305,22 +302,21 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     bot_id = (await context.bot.get_me()).id
 
     if user_id == bot_id:
-        logger.warning("Бот пытался отправить сообщение в поддержку сам себе")
+        logger.warning("Bot tried to send support message to itself")
         return
 
     user_name = update.effective_user.first_name
-    username = update.effective_user.username or "Нет юзернейма"
+    username = update.effective_user.username or "No username"
 
     msg = (
-        f"📩 *Новое сообщение в поддержку*\n\n"
-        f"👤 Пользователь: {user_name} (@{username})\n"
-        f"🆔 ID пользователя: `{user_id}`\n"
-        f"📝 Сообщение:\n`{text}`\n\n"
-        f"💡 Ответьте на это сообщение, чтобы ответить пользователю."
+        f"📩 *New support message*\n\n"
+        f"👤 User: {user_name} (@{username})\n"
+        f"🆔 User ID: `{user_id}`\n"
+        f"📝 Message:\n`{text}`\n\n"
+        f"💡 Reply to this message to answer the user."
     )
 
     try:
-        sent_messages = []
         for admin_id in ADMIN_ID:
             try:
                 sent_msg = await context.bot.send_message(
@@ -329,15 +325,14 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, t
                     parse_mode="Markdown"
                 )
                 support_cache[sent_msg.message_id] = user_id
-                sent_messages.append(sent_msg)
-                logger.info(f"Сообщение админу {admin_id}, msg_id: {sent_msg.message_id} -> user_id: {user_id}")
+                logger.info(f"Message to admin {admin_id}, msg_id: {sent_msg.message_id} -> user_id: {user_id}")
             except Exception as e:
-                logger.warning(f"Не удалось отправить админу {admin_id}: {e}")
+                logger.warning(f"Could not send to admin {admin_id}: {e}")
 
-        await update.message.reply_text("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.")
+        await update.message.reply_text("✅ Your message has been sent to the administrator. Please wait for a response.")
     except Exception as e:
-        logger.error(f"Ошибка отправки админу: {e}")
-        await update.message.reply_text("❌ Не удалось отправить сообщение. Попробуйте позже.")
+        logger.error(f"Error sending to admin: {e}")
+        await update.message.reply_text("❌ Could not send message. Please try again later.")
 
 
 async def forward_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,10 +342,10 @@ async def forward_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not reply_to:
         await update.message.reply_text(
-            "❌ *Для ответа пользователю:*\n"
-            "1. Нажмите 'Ответить' на сообщении от пользователя\n"
-            "2. Или ответьте на сообщение бота с ID пользователя\n"
-            "3. Или используйте команду `/reply ID текст`",
+            "❌ *To reply to a user:*\n"
+            "1. Click 'Reply' on the user's message\n"
+            "2. Or reply to the bot's message with user ID\n"
+            "3. Or use command `/reply ID text`",
             parse_mode="Markdown"
         )
         admin_reply_mode[user_id] = False
@@ -359,17 +354,15 @@ async def forward_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     bot_id = (await context.bot.get_me()).id
     target_user_id = None
 
-    # 1. Проверка по кэшу
     if reply_to.message_id in support_cache:
         target_user_id = support_cache[reply_to.message_id]
-        logger.info(f"ID найден по кэшу: {target_user_id}")
+        logger.info(f"ID found in cache: {target_user_id}")
 
-    # 2. Поиск в тексте
     if target_user_id is None:
         try:
             text = reply_to.text or reply_to.caption or ""
             patterns = [
-                r'🆔 ID пользователя[:：]\s*`?(\d+)`?',
+                r'🆔 User ID[:：]\s*`?(\d+)`?',
                 r'🆔 ID[:：]\s*`?(\d+)`?',
                 r'ID[:：]\s*`?(\d+)`?',
                 r'user_id[:：]\s*`?(\d+)`?',
@@ -380,19 +373,17 @@ async def forward_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
                     found_id = int(match.group(1))
                     if found_id != bot_id and found_id != user_id:
                         target_user_id = found_id
-                        logger.info(f"ID найден по паттерну: {target_user_id}")
+                        logger.info(f"ID found by pattern: {target_user_id}")
                         break
         except Exception as e:
-            logger.warning(f"Ошибка парсинга текста: {e}")
+            logger.warning(f"Text parsing error: {e}")
 
-    # 3. Из автора сообщения
     if target_user_id is None and reply_to.from_user:
         found_id = reply_to.from_user.id
         if found_id != bot_id and found_id != user_id:
             target_user_id = found_id
-            logger.info(f"ID взят из автора сообщения: {target_user_id}")
+            logger.info(f"ID from message author: {target_user_id}")
 
-    # 4. Поиск чисел в тексте
     if target_user_id is None:
         try:
             numbers = re.findall(r'\b(\d{8,12})\b', reply_to.text or "")
@@ -400,47 +391,47 @@ async def forward_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
                 found_id = int(num)
                 if found_id != bot_id and found_id != user_id:
                     target_user_id = found_id
-                    logger.info(f"ID найден по числовому паттерну: {target_user_id}")
+                    logger.info(f"ID by number pattern: {target_user_id}")
                     break
         except Exception as e:
-            logger.warning(f"Ошибка поиска чисел: {e}")
+            logger.warning(f"Number search error: {e}")
 
     if target_user_id is None:
         await update.message.reply_text(
-            "❌ *Не удалось найти ID пользователя.*\n\n"
-            "📋 *Способы ответить:*\n"
-            "1. Ответьте на сообщение пользователя напрямую\n"
-            "2. Используйте команду: `/reply ID текст`\n"
-            "3. Дождитесь нового сообщения от пользователя",
+            "❌ *Could not find user ID.*\n\n"
+            "📋 *Ways to reply:*\n"
+            "1. Reply directly to the user's message\n"
+            "2. Use command: `/reply ID text`\n"
+            "3. Wait for a new message from the user",
             parse_mode="Markdown"
         )
         admin_reply_mode[user_id] = False
         return
 
     if is_admin(target_user_id):
-        await update.message.reply_text("👑 Это администратор. Сообщение не отправлено.")
+        await update.message.reply_text("👑 This is an admin. Message not sent.")
         admin_reply_mode[user_id] = False
         return
 
     if target_user_id == bot_id:
-        await update.message.reply_text("❌ Нельзя отправить сообщение самому боту.")
+        await update.message.reply_text("❌ Cannot send message to the bot itself.")
         admin_reply_mode[user_id] = False
         return
 
     try:
         await context.bot.send_message(
             chat_id=target_user_id,
-            text=f"📞 *Ответ от администратора:*\n\n{admin_text}",
+            text=f"📞 *Response from administrator:*\n\n{admin_text}",
             parse_mode="Markdown"
         )
         await update.message.reply_text(
-            f"✅ *Ответ отправлен пользователю*\n🆔 ID: `{target_user_id}`",
+            f"✅ *Reply sent to user*\n🆔 ID: `{target_user_id}`",
             parse_mode="Markdown"
         )
-        logger.info(f"Админ {user_id} ответил пользователю {target_user_id}")
+        logger.info(f"Admin {user_id} replied to user {target_user_id}")
     except Exception as e:
-        logger.error(f"Ошибка отправки ответа: {e}")
-        await update.message.reply_text(f"❌ Не удалось отправить ответ. Ошибка: {str(e)}")
+        logger.error(f"Reply send error: {e}")
+        await update.message.reply_text(f"❌ Could not send reply. Error: {str(e)}")
 
     admin_reply_mode[user_id] = False
 
@@ -449,13 +440,13 @@ async def process_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     user_id = update.effective_user.id
 
     if len(user_prompt) < 3:
-        await update.message.reply_text("❌ Слишком короткий запрос. Напишите подробнее (минимум 3 символа).")
+        await update.message.reply_text("❌ Too short. Write more (at least 3 characters).")
         return
 
     if not is_admin(user_id):
         if user_balances.get(user_id, 0) <= 0:
             await update.message.reply_text(
-                "❌ У вас закончились генерации!\nКупите новые в магазине (кнопка 🛒 Магазин)."
+                "❌ You have no generations left!\nBuy more in the Shop (🛒 Shop button)."
             )
             return
         user_balances[user_id] -= 1
@@ -472,38 +463,38 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_gen = user_total_generations.get(user_id, 0)
 
     text = (
-        f"👤 *Ваш профиль*\n\n"
+        f"👤 *Your profile*\n\n"
         f"🆔 ID: `{user_id}`\n"
-        f"⭐ Баланс: {balance} генераций\n"
-        f"🖼️ Всего сгенерировано: {total_gen} картинок\n"
-        f"👥 Приглашено: {ref_count} человек\n"
-        f"💰 Заработано рефералов: {ref_count * 0.1:.1f} звезд"
+        f"⭐ Balance: {balance} generations\n"
+        f"🖼️ Total generated: {total_gen} images\n"
+        f"👥 Invited: {ref_count} people\n"
+        f"💰 Referral earnings: {ref_count * 0.1:.1f} stars"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def show_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(update.effective_user.id):
-        await update.message.reply_text("👑 Вы администратор, у вас бесконечные генерации!")
+        await update.message.reply_text("👑 You are an admin, you have infinite generations!")
         return
 
     keyboard = [
-        [InlineKeyboardButton("⭐ 1 генерация — 1 звезда", callback_data="buy_1")],
-        [InlineKeyboardButton("⭐ 10 генераций — 10 звезд", callback_data="buy_10")],
-        [InlineKeyboardButton("⭐ 100 генераций — 50 звезд", callback_data="buy_100")],
-        [InlineKeyboardButton("⭐ 1000 генераций — 500 звезд", callback_data="buy_1000")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_menu")]
+        [InlineKeyboardButton("⭐ 1 generation — 1 star", callback_data="buy_1")],
+        [InlineKeyboardButton("⭐ 10 generations — 10 stars", callback_data="buy_10")],
+        [InlineKeyboardButton("⭐ 100 generations — 50 stars", callback_data="buy_100")],
+        [InlineKeyboardButton("⭐ 1000 generations — 500 stars", callback_data="buy_1000")],
+        [InlineKeyboardButton("🔙 Back", callback_data="back_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "🛒 *Магазин генераций*\n\n"
-        "Выберите тариф:\n"
-        "• 1 генерация — 1 звезда\n"
-        "• 10 генераций — 10 звезд\n"
-        "• 100 генераций — 50 звезд\n"
-        "• 1000 генераций — 500 звезд\n\n"
-        "💡 Оплата происходит автоматически через Telegram Stars.",
+        "🛒 *Generations Shop*\n\n"
+        "Choose a plan:\n"
+        "• 1 generation — 1 star\n"
+        "• 10 generations — 10 stars\n"
+        "• 100 generations — 50 stars\n"
+        "• 1000 generations — 500 stars\n\n"
+        "💡 Payment is automatically processed via Telegram Stars.",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -516,17 +507,17 @@ async def show_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref_count = user_ref_count.get(user_id, 0)
 
     text = (
-        f"👥 *Реферальная система*\n\n"
-        f"📎 Ваша реферальная ссылка:\n"
+        f"👥 *Referral system*\n\n"
+        f"📎 Your referral link:\n"
         f"`{ref_link}`\n\n"
-        f"👥 Приглашено: {ref_count} человек\n"
-        f"💰 Вы получаете 10% от трат каждого реферала!\n\n"
-        f"🔹 1 реферал потратил 10 звезд → вы получаете 1 звезду\n"
-        f"🔹 100 рефералов потратили по 10 звезд → вы получаете 100 звезд\n\n"
-        f"📤 Поделитесь ссылкой с друзьями!"
+        f"👥 Invited: {ref_count} people\n"
+        f"💰 You get 10% of each referral's spending!\n\n"
+        f"🔹 1 referral spent 10 stars → you get 1 star\n"
+        f"🔹 100 referrals spent 10 stars → you get 100 stars\n\n"
+        f"📤 Share the link with your friends!"
     )
 
-    keyboard = [[InlineKeyboardButton("📋 Скопировать ссылку", callback_data="copy_ref")]]
+    keyboard = [[InlineKeyboardButton("📋 Copy link", callback_data="copy_ref")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -534,12 +525,12 @@ async def show_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(update.effective_user.id):
-        await update.message.reply_text("👑 Вы администратор. Вам не нужна поддержка.")
+        await update.message.reply_text("👑 You are an admin. You don't need support.")
         return
 
     text = (
-        f"📞 *Поддержка*\n\n"
-        f"Напишите любое сообщение, и оно будет отправлено администратору."
+        f"📞 *Support*\n\n"
+        f"Write any message and it will be sent to the administrator."
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -547,24 +538,24 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     balance = "♾️" if is_admin(user_id) else user_balances.get(user_id, 0)
-    await update.message.reply_text(f"⭐ Ваш баланс: {balance} генераций")
+    await update.message.reply_text(f"⭐ Your balance: {balance} generations")
 
 
 async def free(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_admin(user_id):
-        await update.message.reply_text("👑 Вы администратор, у вас бесконечные генерации.")
+        await update.message.reply_text("👑 You are an admin, you have infinite generations.")
         return
 
     if user_free_claimed.get(user_id, False):
-        await update.message.reply_text("❌ Вы уже использовали бесплатную генерацию.")
+        await update.message.reply_text("❌ You have already used the free generation.")
         return
     user_free_claimed[user_id] = True
     user_balances[user_id] = user_balances.get(user_id, 0) + 1
     save_data()
     await update.message.reply_text(
-        "✅ Вам начислена *1 бесплатная генерация*!\n"
-        "Нажмите «Создать генерацию» и отправьте промпт.",
+        "✅ You have been given *1 free generation*!\n"
+        "Click 'Create generation' and send your prompt.",
         parse_mode="Markdown"
     )
 
@@ -573,11 +564,11 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int, pr
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    title = f"{count} генераций ИИ-картинок"
-    description = f"Пакет из {count} генераций уникальных картинок через ИИ."
+    title = f"{count} AI image generations"
+    description = f"Package of {count} unique AI-generated images."
     payload = f"generate_{user_id}_{datetime.now().timestamp()}"
     currency = "XTR"
-    prices = [LabeledPrice(f"{count} генераций", price)]
+    prices = [LabeledPrice(f"{count} generations", price)]
 
     await context.bot.send_invoice(
         chat_id=chat_id,
@@ -626,17 +617,17 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 referrer_id,
-                f"🎉 Ваш реферал потратил {total_amount} звезд!\n"
-                f"💰 Вы получили {bonus:.1f} генераций в подарок!"
+                f"🎉 Your referral spent {total_amount} stars!\n"
+                f"💰 You received {bonus:.1f} generations as a bonus!"
             )
         except:
             pass
 
     await update.message.reply_text(
-        f"✅ Оплата подтверждена!\n"
-        f"⭐ Вам начислено {count} генераций.\n"
-        f"💰 Баланс: {user_balances[user_id]} генераций\n\n"
-        "📝 Нажмите «Создать генерацию» и отправьте промпт!"
+        f"✅ Payment confirmed!\n"
+        f"⭐ You received {count} generations.\n"
+        f"💰 Balance: {user_balances[user_id]} generations\n\n"
+        "📝 Click 'Create generation' and send your prompt!"
     )
 
 
@@ -668,7 +659,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
         await query.message.reply_text(
-            f"📎 Ваша реферальная ссылка:\n`{ref_link}`",
+            f"📎 Your referral link:\n`{ref_link}`",
             parse_mode="Markdown"
         )
 
@@ -677,14 +668,14 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not is_admin(user_id):
-        await update.message.reply_text("⛔ Только для администраторов.")
+        await update.message.reply_text("⛔ Only for administrators.")
         return
 
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "❌ *Использование:* `/reply ID текст`\n"
-            "Пример: `/reply 123456789 Привет!`",
+            "❌ *Usage:* `/reply ID text`\n"
+            "Example: `/reply 123456789 Hello!`",
             parse_mode="Markdown"
         )
         return
@@ -694,34 +685,36 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = " ".join(args[1:])
 
         if is_admin(target_user_id):
-            await update.message.reply_text("👑 Это администратор. Сообщение не отправлено.")
+            await update.message.reply_text("👑 This is an admin. Message not sent.")
             return
 
         if target_user_id == (await context.bot.get_me()).id:
-            await update.message.reply_text("❌ Нельзя отправить сообщение самому боту.")
+            await update.message.reply_text("❌ Cannot send message to the bot itself.")
             return
 
         await context.bot.send_message(
             chat_id=target_user_id,
-            text=f"📞 *Ответ от администратора:*\n\n{text}",
+            text=f"📞 *Response from administrator:*\n\n{text}",
             parse_mode="Markdown"
         )
         await update.message.reply_text(
-            f"✅ *Ответ отправлен пользователю*\n🆔 ID: `{target_user_id}`",
+            f"✅ *Reply sent to user*\n🆔 ID: `{target_user_id}`",
             parse_mode="Markdown"
         )
-        logger.info(f"Админ {user_id} ответил пользователю {target_user_id} через команду /reply")
+        logger.info(f"Admin {user_id} replied to user {target_user_id} via /reply")
     except ValueError:
-        await update.message.reply_text("❌ ID должен быть числом.")
+        await update.message.reply_text("❌ ID must be a number.")
     except Exception as e:
-        logger.error(f"Ошибка в reply_command: {e}")
-        await update.message.reply_text(f"❌ Не удалось отправить ответ. Ошибка: {str(e)}")
+        logger.error(f"Reply command error: {e}")
+        await update.message.reply_text(f"❌ Could not send reply. Error: {str(e)}")
 
 
 def main():
     load_data()
 
     from telegram.request import HTTPXRequest
+    import asyncio
+
     request = HTTPXRequest(
         connect_timeout=120.0,
         read_timeout=120.0,
@@ -736,13 +729,13 @@ def main():
     app.add_handler(CommandHandler("free", free))
     app.add_handler(CommandHandler("reply", reply_command))
     app.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text(
-        "📝 *Команды:*\n"
-        "/start — главное меню\n"
-        "/balance — баланс\n"
-        "/free — бесплатная генерация (1 раз)\n"
-        "/reply ID текст — ответ пользователю (только для админов)\n"
-        "/help — помощь\n\n"
-        "💡 Используйте кнопки меню для навигации.",
+        "📝 *Commands:*\n"
+        "/start — main menu\n"
+        "/balance — balance\n"
+        "/free — 1 free generation (1 time)\n"
+        "/reply ID text — reply to user (admins only)\n"
+        "/help — help\n\n"
+        "💡 Use the menu buttons to navigate.",
         parse_mode="Markdown"
     )))
 
@@ -751,11 +744,18 @@ def main():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    logger.info("🤖 Бот запущен! Оплата звёздами Telegram.")
+    logger.info("🤖 Bot started! Payment via Telegram Stars.")
     logger.info(f"👤 ADMIN ID: {ADMIN_ID}")
-    logger.info("📌 Для ответа пользователю: /reply ID текст")
-    logger.info("📌 Или просто ответьте на сообщение пользователя")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("📌 To reply to a user: /reply ID text")
+    logger.info("📌 Or simply reply to the user's message")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(app.run_polling(allowed_updates=Update.ALL_TYPES))
 
 
 if __name__ == "__main__":

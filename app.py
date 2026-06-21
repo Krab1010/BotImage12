@@ -18,11 +18,11 @@ def run_bot():
         import BotImage
         BotImage.main()
     except Exception as e:
-        logger.error(f"Ошибка в боте: {e}")
+        logger.error(f"Bot error: {e}")
 
 if __name__ == '__main__':
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    logger.info("Бот запущен в фоновом потоке")
+    logger.info("Bot started in background thread")
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
